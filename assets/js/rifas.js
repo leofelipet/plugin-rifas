@@ -25,6 +25,7 @@
         const $btnVoltar = $('#rifas-btn-voltar');
         const $btnFinalizar = $('#rifas-btn-finalizar');
         const $btnFiltro = $('.rifas-btn-filtro');
+        const $carregarMais = $('#rifas-carregar-mais');
         
         // Confirmação etapa 3
         const $confirmacaoSucesso = $('.rifas-confirmacao-sucesso');
@@ -44,6 +45,10 @@
         let numerosSelecionadosArray = [];
         let maxNumerosPermitidos = 0;
         let filtroAtual = 'disponiveis';
+        let paginaAtual = 1;
+        let totalPaginas = 1;
+        let numerosPorPagina = 100; // Quantidade de números por página
+        let carregando = false;
         
         // Atualizar informações sobre quantidade de números
         $valor.on('input', function() {
@@ -83,12 +88,23 @@
             maxNumerosPermitidos = Math.floor(valor / valorPorNumero);
             $maxNumeros.text(maxNumerosPermitidos);
             
+            // Resetar para a primeira página
+            paginaAtual = 1;
+            
             // Carregar números disponíveis
-            carregarNumeros();
+            carregarNumeros(true);
             
             // Mudar para etapa 2
             $etapa1.hide();
             $etapa2.show();
+            
+            // Registrar evento de visualização de etapa 2 (opcional)
+            if (typeof gtag === 'function') {
+                gtag('event', 'visualizar_selecao_numeros', {
+                    'event_category': 'rifas',
+                    'event_label': 'Etapa 2 - Seleção de Números'
+                });
+            }
         });
         
         // Botão voltar para etapa 1
@@ -99,6 +115,16 @@
             $numerosSelecionados.text('0');
             $btnFinalizar.prop('disabled', true);
         });
+        
+        // Botão carregar mais números
+        if ($carregarMais.length) {
+            $carregarMais.on('click', function() {
+                if (paginaAtual < totalPaginas && !carregando) {
+                    paginaAtual++;
+                    carregarNumeros(false);
+                }
+            });
+        }
         
         // Botão finalizar compra
         $btnFinalizar.on('click', function() {
@@ -143,6 +169,15 @@
                         $confirmEmail.text($email.val());
                         $confirmValor.text(parseFloat($valor.val()).toFixed(2).replace('.', ','));
                         $confirmNumeros.text(numerosSelecionadosArray.join(', '));
+                        
+                        // Registrar evento de compra concluída (opcional)
+                        if (typeof gtag === 'function') {
+                            gtag('event', 'compra_concluida', {
+                                'event_category': 'rifas',
+                                'event_label': 'Compra Concluída',
+                                'value': parseFloat($valor.val()) || 0
+                            });
+                        }
                     } else {
                         // Mostrar erro
                         $confirmacaoErro.show();
@@ -150,7 +185,8 @@
                         
                         // Se houver números indisponíveis, atualizar lista
                         if (response.data.numeros_indisponiveis) {
-                            carregarNumeros();
+                            paginaAtual = 1;
+                            carregarNumeros(true);
                         }
                     }
                 },
@@ -186,12 +222,38 @@
             $this.addClass('active');
             
             filtroAtual = filtro;
-            carregarNumeros();
+            paginaAtual = 1;
+            carregarNumeros(true);
+        });
+        
+        // Scroll infinito para carregar mais números (opcional)
+        $gridNumeros.on('scroll', function() {
+            const scrollHeight = $(this).prop('scrollHeight');
+            const scrollTop = $(this).scrollTop();
+            const offsetHeight = $(this).height();
+            
+            // Se chegou próximo ao fim, carrega mais
+            if ((scrollTop + offsetHeight + 50 >= scrollHeight) && paginaAtual < totalPaginas && !carregando) {
+                paginaAtual++;
+                carregarNumeros(false);
+            }
         });
         
         // Carregar números
-        function carregarNumeros() {
-            $gridNumeros.html('<div class="rifas-loading">Carregando números...</div>');
+        function carregarNumeros(limpar = true) {
+            if (carregando) return;
+            
+            carregando = true;
+            
+            if (limpar) {
+                $gridNumeros.html('<div class="rifas-loading">Carregando números...</div>');
+            } else {
+                $gridNumeros.append('<div class="rifas-loading" id="rifas-loading-mais">Carregando mais números...</div>');
+            }
+            
+            if ($carregarMais.length) {
+                $carregarMais.prop('disabled', true).text('Carregando...');
+            }
             
             $.ajax({
                 url: rifas_ajax.ajax_url,
@@ -199,32 +261,75 @@
                 data: {
                     action: 'get_numeros_rifas',
                     nonce: rifas_ajax.nonce,
-                    mostrar: filtroAtual
+                    mostrar: filtroAtual,
+                    pagina: paginaAtual,
+                    por_pagina: numerosPorPagina
                 },
                 success: function(response) {
+                    carregando = false;
+                    
                     if (response.success) {
-                        renderizarNumeros(response.data.numeros);
+                        if (limpar) {
+                            $gridNumeros.empty();
+                        } else {
+                            $('#rifas-loading-mais').remove();
+                        }
+                        
+                        renderizarNumeros(response.data.numeros, limpar);
+                        
+                        // Atualizar informações de paginação
+                        totalPaginas = response.data.total_paginas || 1;
+                        
+                        if ($carregarMais.length) {
+                            $carregarMais.prop('disabled', paginaAtual >= totalPaginas)
+                                         .text(paginaAtual >= totalPaginas ? 'Não há mais números' : 'Carregar mais números');
+                            
+                            // Mostrar ou esconder o botão conforme necessário
+                            $carregarMais.toggle(paginaAtual < totalPaginas);
+                        }
                     } else {
-                        $gridNumeros.html('<p>Erro ao carregar números.</p>');
+                        if (limpar) {
+                            $gridNumeros.html('<p>Erro ao carregar números.</p>');
+                        } else {
+                            $('#rifas-loading-mais').remove();
+                        }
+                        
+                        if ($carregarMais.length) {
+                            $carregarMais.prop('disabled', false).text('Tentar novamente');
+                        }
                     }
                 },
                 error: function() {
-                    $gridNumeros.html('<p>Erro de conexão. Por favor, tente novamente.</p>');
+                    carregando = false;
+                    
+                    if (limpar) {
+                        $gridNumeros.html('<p>Erro de conexão. Por favor, tente novamente.</p>');
+                    } else {
+                        $('#rifas-loading-mais').remove();
+                    }
+                    
+                    if ($carregarMais.length) {
+                        $carregarMais.prop('disabled', false).text('Tentar novamente');
+                    }
                 }
             });
         }
         
         // Renderizar números
-        function renderizarNumeros(numeros) {
-            $gridNumeros.empty();
-            
+        function renderizarNumeros(numeros, limpar = true) {
             if (numeros.length === 0) {
-                $gridNumeros.html('<p>Não há números disponíveis.</p>');
+                if (limpar) {
+                    $gridNumeros.html('<p>Não há números disponíveis.</p>');
+                }
                 return;
             }
             
             // Reconsiderar os números selecionados
-            const novosSelecionados = [];
+            if (limpar) {
+                numerosSelecionadosArray = [];
+            }
+            
+            const fragment = document.createDocumentFragment();
             
             numeros.forEach(function(item) {
                 const numero = parseInt(item.numero);
@@ -237,7 +342,9 @@
                     classes += ' disponivel';
                     if (isSelecionado) {
                         classes += ' selecionado';
-                        novosSelecionados.push(numero);
+                        if (!numerosSelecionadosArray.includes(numero)) {
+                            numerosSelecionadosArray.push(numero);
+                        }
                     }
                 } else {
                     classes += ' vendido';
@@ -256,11 +363,17 @@
                     });
                 }
                 
-                $gridNumeros.append($numeroElement);
+                fragment.appendChild($numeroElement[0]);
             });
             
-            // Atualizar array de selecionados
-            numerosSelecionadosArray = novosSelecionados;
+            if (limpar) {
+                $gridNumeros.empty();
+            }
+            
+            $gridNumeros.append(fragment);
+            
+            // Atualizar contador
+            numerosSelecionadosArray.sort((a, b) => a - b);
             $numerosSelecionados.text(numerosSelecionadosArray.length);
             
             // Habilitar/desabilitar botão de finalizar
@@ -304,6 +417,7 @@
             numerosSelecionadosArray = [];
             $numerosSelecionados.text('0');
             $btnFinalizar.prop('disabled', true);
+            paginaAtual = 1;
             
             // Restaurar filtro padrão
             $btnFiltro.removeClass('active');
@@ -316,6 +430,20 @@
             const re = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
             return re.test(email);
         }
+        
+        // Inicializar tooltips (opcional)
+        if ($.fn.tooltip) {
+            $('.rifas-tooltip').tooltip();
+        }
+        
+        // Detecção de conexão offline
+        window.addEventListener('online', function() {
+            $('.rifas-offline-message').remove();
+        });
+        
+        window.addEventListener('offline', function() {
+            $app.prepend('<div class="rifas-offline-message">Você está offline. Algumas funcionalidades podem não funcionar corretamente.</div>');
+        });
     });
     
 })(jQuery);
