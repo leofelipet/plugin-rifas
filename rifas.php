@@ -383,19 +383,84 @@ class Rifas_Plugin {
     public function ajax_get_numeros_rifas() {
         check_ajax_referer('rifas_nonce', 'nonce');
         
+        // Parâmetros de paginação e filtro
         $mostrar = isset($_POST['mostrar']) ? sanitize_text_field($_POST['mostrar']) : 'disponiveis';
+        $pagina = isset($_POST['pagina']) ? intval($_POST['pagina']) : 1;
+        $por_pagina = isset($_POST['por_pagina']) ? intval($_POST['por_pagina']) : 100;
+        
+        // Limitar máximo de itens por página para evitar sobrecarga
+        $por_pagina = min($por_pagina, 500);
+        
+        // Calcular offset para paginação
+        $offset = ($pagina - 1) * $por_pagina;
         
         global $wpdb;
         $table_rifas = $wpdb->prefix . 'rifas_numeros';
         
+        // Obter o total de registros para calcular o número total de páginas
         if ($mostrar == 'todos') {
-            $numeros = $wpdb->get_results("SELECT id, numero, status FROM $table_rifas ORDER BY numero ASC");
+            $total_registros = $wpdb->get_var("SELECT COUNT(*) FROM $table_rifas");
+        } elseif ($mostrar == 'vendidos') {
+            $total_registros = $wpdb->get_var("SELECT COUNT(*) FROM $table_rifas WHERE status = 'vendido'");
         } else {
-            $numeros = $wpdb->get_results("SELECT id, numero, status FROM $table_rifas WHERE status = 'disponivel' ORDER BY numero ASC");
+            // Padrão: mostrar apenas disponíveis
+            $total_registros = $wpdb->get_var("SELECT COUNT(*) FROM $table_rifas WHERE status = 'disponivel'");
         }
         
+        // Calcular total de páginas
+        $total_paginas = ceil($total_registros / $por_pagina);
+        
+        // Consulta para obter os números da página atual
+        if ($mostrar == 'todos') {
+            $numeros = $wpdb->get_results(
+                $wpdb->prepare(
+                    "SELECT id, numero, status FROM $table_rifas ORDER BY numero ASC LIMIT %d OFFSET %d",
+                    $por_pagina,
+                    $offset
+                )
+            );
+        } elseif ($mostrar == 'vendidos') {
+            $numeros = $wpdb->get_results(
+                $wpdb->prepare(
+                    "SELECT id, numero, status FROM $table_rifas WHERE status = 'vendido' ORDER BY numero ASC LIMIT %d OFFSET %d",
+                    $por_pagina,
+                    $offset
+                )
+            );
+        } else {
+            // Padrão: mostrar apenas disponíveis
+            $numeros = $wpdb->get_results(
+                $wpdb->prepare(
+                    "SELECT id, numero, status FROM $table_rifas WHERE status = 'disponivel' ORDER BY numero ASC LIMIT %d OFFSET %d",
+                    $por_pagina,
+                    $offset
+                )
+            );
+        }
+        
+        // Performance: cache da consulta se estiver em produção
+        if (!WP_DEBUG) {
+            $cache_key = 'rifas_numeros_' . md5($mostrar . '_' . $pagina . '_' . $por_pagina);
+            $cache_time = 5 * MINUTE_IN_SECONDS; // 5 minutos
+            wp_cache_set($cache_key, $numeros, 'rifas', $cache_time);
+        }
+        
+        // Registrar log se necessário (apenas para admin)
+        if (current_user_can('manage_options') && function_exists('rifas_registrar_log')) {
+            rifas_registrar_log('consulta_numeros', array(
+                'filtro' => $mostrar,
+                'pagina' => $pagina,
+                'total_registros' => $total_registros
+            ));
+        }
+        
+        // Enviar resposta com informações de paginação
         wp_send_json_success(array(
-            'numeros' => $numeros
+            'numeros' => $numeros,
+            'pagina_atual' => $pagina,
+            'total_paginas' => $total_paginas,
+            'total_registros' => $total_registros,
+            'por_pagina' => $por_pagina
         ));
         
         wp_die();

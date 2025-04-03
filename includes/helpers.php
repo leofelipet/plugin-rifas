@@ -382,43 +382,152 @@ function rifas_metabox_dashboard_conteudo() {
  * 
  * @param string $acao Ação realizada
  * @param array $dados Dados relacionados à ação
- * @return void
+ * @param string $nivel Nível do log (info, warning, error)
+ * @return bool True se o log foi registrado com sucesso
  */
-function rifas_registrar_log($acao, $dados = array()) {
+function rifas_registrar_log($acao, $dados = array(), $nivel = 'info') {
+    // Verificar configuração para determinar se devemos registrar logs
+    $options = get_option('rifas_options');
+    $registrar_logs = isset($options['registrar_logs']) ? (bool) $options['registrar_logs'] : true;
+    
+    // Se os logs estiverem desativados nas configurações, não faz nada
+    if (!$registrar_logs && $nivel !== 'error') {
+        return false;
+    }
+    
+    // Validar dados antes de armazenar
+    $dados_sanitizados = array();
+    foreach ($dados as $chave => $valor) {
+        // Sanitizar chaves e valores para garantir segurança
+        $chave_sanitizada = sanitize_text_field($chave);
+        
+        if (is_array($valor)) {
+            // Para arrays, sanitizar recursivamente
+            $dados_sanitizados[$chave_sanitizada] = array_map('sanitize_text_field', $valor);
+        } else {
+            // Para valores simples, sanitizar diretamente
+            $dados_sanitizados[$chave_sanitizada] = sanitize_text_field($valor);
+        }
+    }
+    
+    // Obter logs existentes
     $log = get_option('rifas_logs', array());
     
+    // Dados para o novo item de log
     $novo_item = array(
         'timestamp' => current_time('timestamp'),
-        'acao' => $acao,
-        'dados' => $dados,
-        'ip' => $_SERVER['REMOTE_ADDR']
+        'data' => current_time('mysql'),
+        'acao' => sanitize_text_field($acao),
+        'dados' => $dados_sanitizados,
+        'nivel' => $nivel,
+        'ip' => sanitize_text_field($_SERVER['REMOTE_ADDR']),
+        'usuario_id' => get_current_user_id()
     );
+    
+    // Adicionar informações do agente do usuário (opcional)
+    if (isset($_SERVER['HTTP_USER_AGENT'])) {
+        $novo_item['user_agent'] = sanitize_text_field($_SERVER['HTTP_USER_AGENT']);
+    }
     
     // Adicionar novo item no início do array
     array_unshift($log, $novo_item);
     
-    // Limitar a 100 registros
-    if (count($log) > 100) {
-        $log = array_slice($log, 0, 100);
+    // Limitar o número máximo de logs conforme configuração
+    $max_logs = isset($options['max_logs']) ? intval($options['max_logs']) : 100;
+    if (count($log) > $max_logs) {
+        $log = array_slice($log, 0, $max_logs);
     }
     
-    update_option('rifas_logs', $log);
+    // Salvar logs atualizados
+    $atualizado = update_option('rifas_logs', $log);
+    
+    // Para erros críticos, também registrar no log do WordPress
+    if ($nivel === 'error' && WP_DEBUG) {
+        $mensagem_erro = "Rifas Plugin - ERRO: {$acao}";
+        if (!empty($dados_sanitizados)) {
+            $mensagem_erro .= " | Dados: " . json_encode($dados_sanitizados);
+        }
+        error_log($mensagem_erro);
+    }
+    
+    // Possibilidade de exportar logs para serviços externos
+    if (has_action('rifas_log_registrado')) {
+        do_action('rifas_log_registrado', $novo_item);
+    }
+    
+    return $atualizado;
 }
 
 /**
  * Obter logs de atividade
  * 
- * @param int $limite Quantidade de logs a retornar
+ * @param int $limite Quantidade de logs a retornar (0 para todos)
+ * @param string $nivel Filtrar por nível (info, warning, error, all)
+ * @param string $acao Filtrar por ação específica
  * @return array Logs de atividade
  */
-function rifas_obter_logs($limite = 50) {
+function rifas_obter_logs($limite = 50, $nivel = 'all', $acao = '') {
     $logs = get_option('rifas_logs', array());
     
+    // Aplicar filtros se necessário
+    if ($nivel !== 'all' || !empty($acao)) {
+        $logs_filtrados = array();
+        
+        foreach ($logs as $log) {
+            $nivel_match = $nivel === 'all' || $log['nivel'] === $nivel;
+            $acao_match = empty($acao) || $log['acao'] === $acao;
+            
+            if ($nivel_match && $acao_match) {
+                $logs_filtrados[] = $log;
+            }
+        }
+        
+        $logs = $logs_filtrados;
+    }
+    
+    // Limitar quantidade se necessário
     if ($limite > 0) {
         return array_slice($logs, 0, $limite);
     }
     
     return $logs;
+}
+
+/**
+ * Limpar logs antigos
+ * 
+ * @param int $dias Manter logs mais recentes que este número de dias
+ * @return int Número de logs removidos
+ */
+function rifas_limpar_logs_antigos($dias = 30) {
+    if (!current_user_can('manage_options')) {
+        return 0;
+    }
+    
+    $logs = get_option('rifas_logs', array());
+    $tempo_limite = time() - (DAY_IN_SECONDS * $dias);
+    $logs_mantidos = array();
+    $logs_removidos = 0;
+    
+    foreach ($logs as $log) {
+        if ($log['timestamp'] >= $tempo_limite) {
+            $logs_mantidos[] = $log;
+        } else {
+            $logs_removidos++;
+        }
+    }
+    
+    if ($logs_removidos > 0) {
+        update_option('rifas_logs', $logs_mantidos);
+        
+        // Registrar a limpeza
+        rifas_registrar_log('logs_limpos', array(
+            'dias' => $dias,
+            'quantidade_removida' => $logs_removidos
+        ));
+    }
+    
+    return $logs_removidos;
 }
 
 /**
@@ -464,16 +573,83 @@ function rifas_obter_admin_url($tab = '') {
  * 
  * @param string $para Email do destinatário
  * @param string $assunto Assunto do email
- * @param string $mensagem Conteúdo do email
+ * @param string $mensagem Conteúdo do email (HTML)
+ * @param array $anexos Array com caminhos de arquivos para anexos (opcional)
  * @return bool True se o email foi enviado com sucesso
  */
-function rifas_enviar_email($para, $assunto, $mensagem) {
+function rifas_enviar_email($para, $assunto, $mensagem, $anexos = array()) {
+    $options = get_option('rifas_options');
+    
+    // Verificar se o email do destinatário é válido
+    if (!is_email($para)) {
+        if (WP_DEBUG) {
+            error_log('Rifas: Tentativa de enviar email para endereço inválido: ' . $para);
+        }
+        return false;
+    }
+    
+    // Headers padrão para emails HTML
     $headers = array('Content-Type: text/html; charset=UTF-8');
     
-    // Usar template padrão do WordPress se disponível
-    $mensagem = wpautop($mensagem); // Converter quebras de linha em parágrafos
+    // Adicionar remetente personalizado se configurado
+    if (!empty($options['email_remetente'])) {
+        $remetente_nome = !empty($options['nome_remetente']) ? $options['nome_remetente'] : get_bloginfo('name');
+        $headers[] = 'From: ' . $remetente_nome . ' <' . $options['email_remetente'] . '>';
+    }
     
-    return wp_mail($para, $assunto, $mensagem, $headers);
+    // Criar versão de texto alternativa para clientes de email que não suportam HTML
+    $texto_alternativo = wp_strip_all_tags($mensagem);
+    
+    // Verificar se há plugins populares de email instalados
+    $usar_wp_mail = true;
+    $email_enviado = false;
+    
+    // Compatibilidade com WP Mail SMTP
+    if (function_exists('wp_mail_smtp') && $usar_wp_mail) {
+        // WP Mail SMTP já modifica wp_mail, então apenas usamos wp_mail normalmente
+        $email_enviado = wp_mail($para, $assunto, $mensagem, $headers, $anexos);
+    }
+    // Compatibilidade com Easy WP SMTP
+    elseif (function_exists('swpsmtp_init') && $usar_wp_mail) {
+        // Easy WP SMTP também modifica wp_mail
+        $email_enviado = wp_mail($para, $assunto, $mensagem, $headers, $anexos);
+    }
+    // Compatibilidade com Post SMTP
+    elseif (class_exists('PostmanOptions') && $usar_wp_mail) {
+        // Post SMTP modifica wp_mail
+        $email_enviado = wp_mail($para, $assunto, $mensagem, $headers, $anexos);
+    }
+    // Compatibilidade com SendGrid
+    elseif (function_exists('sendgrid_get_api_key') && class_exists('SendGrid_Settings')) {
+        // O plugin SendGrid oferece sua própria função que podemos usar
+        // No entanto, para simplicidade, continuamos a usar wp_mail, já que o plugin modifica isso
+        $email_enviado = wp_mail($para, $assunto, $mensagem, $headers, $anexos);
+    }
+    // Método padrão - wp_mail
+    else {
+        $email_enviado = wp_mail($para, $assunto, $mensagem, $headers, $anexos);
+    }
+    
+    // Registrar envio de email em log
+    if (function_exists('rifas_registrar_log')) {
+        rifas_registrar_log('email_enviado', array(
+            'para' => $para,
+            'assunto' => $assunto,
+            'sucesso' => $email_enviado
+        ));
+    }
+    
+    // Registrar erros se em modo debug
+    if (!$email_enviado && WP_DEBUG) {
+        global $phpmailer;
+        if (isset($phpmailer) && $phpmailer instanceof PHPMailer\PHPMailer\PHPMailer) {
+            error_log('Rifas: Erro ao enviar email - ' . $phpmailer->ErrorInfo);
+        } else {
+            error_log('Rifas: Erro ao enviar email para ' . $para);
+        }
+    }
+    
+    return $email_enviado;
 }
 
 /**
