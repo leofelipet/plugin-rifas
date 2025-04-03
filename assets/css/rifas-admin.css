@@ -1,0 +1,149 @@
+/* assets/css/rifas-admin.css */
+.rifas-dashboard {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    gap: 20px;
+    margin-top: 20px;
+}
+
+.rifas-card {
+    background-color: #fff;
+    border-radius: 5px;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+    overflow: hidden;
+}
+
+.rifas-card-header {
+    background-color: var(--rifas-cor-principal, #4CAF50);
+    color: #fff;
+    padding: 15px;
+}
+
+.rifas-card-header h2 {
+    margin: 0;
+    font-size: 18px;
+}
+
+.rifas-card-body {
+    padding: 20px;
+}
+
+.rifas-stat {
+    display: inline-block;
+    text-align: center;
+    margin: 10px;
+    min-width: 100px;
+}
+
+.rifas-stat-value {
+    display: block;
+    font-size: 24px;
+    font-weight: bold;
+    color: var(--rifas-cor-principal, #4CAF50);
+}
+
+.rifas-stat-label {
+    display: block;
+    font-size: 14px;
+    color: #666;
+    margin-top: 5px;
+}
+
+.rifas-actions {
+    display: flex;
+    gap: 10px;
+}
+
+/* Formulário de configurações */
+.form-table input[type="color"] {
+    width: 70px;
+    height: 28px;
+    padding: 0;
+    cursor: pointer;
+}
+
+.color-preview {
+    display: inline-block;
+    width: 20px;
+    height: 20px;
+    margin-left: 10px;
+    border: 1px solid #ddd;
+    vertical-align: middle;
+}
+
+/* Tabela de compras */
+.rifas-export-link {
+    margin-left: 10px;
+}
+
+.column-numeros {
+    width: 200px;
+}
+
+.column-data_compra {
+    width: 150px;
+}
+
+.rifas-numeros-list {
+    max-height: 100px;
+    overflow-y: auto;
+    padding: 5px;
+    background-color: #f9f9f9;
+    border-radius: 3px;
+    border: 1px solid #eee;
+}
+
+.rifas-detalhes-button {
+    margin-top: 5px !important;
+}
+
+/* Modal de detalhes */
+.rifas-modal {
+    display: none;
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0, 0, 0, 0.5);
+    z-index: 9999;
+    overflow: auto;
+}
+
+.rifas-modal-content {
+    position: relative;
+    background-color: #fff;
+    margin: 10% auto;
+    padding: 20px;
+    width: 80%;
+    max-width: 600px;
+    border-radius: 5px;
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+}
+
+.rifas-modal-close {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    font-size: 20px;
+    font-weight: bold;
+    cursor: pointer;
+}
+
+.rifas-modal-title {
+    margin-top: 0;
+    color: var(--rifas-cor-principal, #4CAF50);
+}
+
+.rifas-modal-detalhes {
+    margin-top: 20px;
+}
+
+.rifas-modal-detalhes p {
+    margin: 10px 0;
+}
+
+.rifas-modal-footer {
+    margin-top: 20px;
+    text-align: right;
+}
