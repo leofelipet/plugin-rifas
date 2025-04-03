@@ -210,73 +210,81 @@ $valor_por_numero = floatval($options['valor_por_numero']);
                             compras.push(parseInt(item.total_compras));
                         });
                         
-                        var myChart = new Chart(ctx, {
-                            type: 'bar',
-                            data: {
-                                labels: labels,
-                                datasets: [{
-                                    label: '<?php esc_html_e('Valor Arrecadado (R$)', 'rifas'); ?>',
-                                    data: valores,
-                                    backgroundColor: 'rgba(76, 175, 80, 0.5)',
-                                    borderColor: 'rgba(76, 175, 80, 1)',
-                                    borderWidth: 1,
-                                    yAxisID: 'y-axis-1'
-                                }, {
-                                    label: '<?php esc_html_e('Quantidade de Compras', 'rifas'); ?>',
-                                    data: compras,
-                                    type: 'line',
-                                    fill: false,
-                                    backgroundColor: 'rgba(54, 162, 235, 0.5)',
-                                    borderColor: 'rgba(54, 162, 235, 1)',
-                                    borderWidth: 2,
-                                    pointRadius: 4,
-                                    pointBackgroundColor: 'rgba(54, 162, 235, 1)',
-                                    yAxisID: 'y-axis-2'
-                                }]
-                            },
-                            options: {
-                                responsive: true,
-                                scales: {
-                                    x: {
-                                        title: {
-                                            display: true,
-                                            text: '<?php esc_html_e('Data', 'rifas'); ?>'
-                                        }
-                                    },
-                                    'y-axis-1': {
-                                        type: 'linear',
-                                        display: true,
-                                        position: 'left',
-                                        title: {
-                                            display: true,
-                                            text: '<?php esc_html_e('Valor (R$)', 'rifas'); ?>'
-                                        },
-                                        ticks: {
-                                            beginAtZero: true,
-                                            callback: function(value) {
-                                                return 'R$ ' + value;
+                        // Função para inicializar o gráfico com Chart.js v3
+                        function initializeCharts() {
+                            var myChart = new Chart(ctx, {
+                                type: 'bar',
+                                data: {
+                                    labels: labels,
+                                    datasets: [{
+                                        label: '<?php esc_html_e('Valor Arrecadado (R$)', 'rifas'); ?>',
+                                        data: valores,
+                                        backgroundColor: 'rgba(76, 175, 80, 0.5)',
+                                        borderColor: 'rgba(76, 175, 80, 1)',
+                                        borderWidth: 1,
+                                        yAxisID: 'y'
+                                    }, {
+                                        label: '<?php esc_html_e('Quantidade de Compras', 'rifas'); ?>',
+                                        data: compras,
+                                        type: 'line',
+                                        fill: false,
+                                        backgroundColor: 'rgba(54, 162, 235, 0.5)',
+                                        borderColor: 'rgba(54, 162, 235, 1)',
+                                        borderWidth: 2,
+                                        pointRadius: 4,
+                                        pointBackgroundColor: 'rgba(54, 162, 235, 1)',
+                                        yAxisID: 'y1'
+                                    }]
+                                },
+                                options: {
+                                    responsive: true,
+                                    scales: {
+                                        x: {
+                                            title: {
+                                                display: true,
+                                                text: '<?php esc_html_e('Data', 'rifas'); ?>'
                                             }
-                                        }
-                                    },
-                                    'y-axis-2': {
-                                        type: 'linear',
-                                        display: true,
-                                        position: 'right',
-                                        grid: {
-                                            drawOnChartArea: false,
                                         },
-                                        title: {
+                                        y: {
+                                            type: 'linear',
                                             display: true,
-                                            text: '<?php esc_html_e('Quantidade', 'rifas'); ?>'
+                                            position: 'left',
+                                            title: {
+                                                display: true,
+                                                text: '<?php esc_html_e('Valor (R$)', 'rifas'); ?>'
+                                            },
+                                            ticks: {
+                                                beginAtZero: true,
+                                                callback: function(value) {
+                                                    return 'R$ ' + value;
+                                                }
+                                            }
                                         },
-                                        ticks: {
-                                            beginAtZero: true,
-                                            stepSize: 1
+                                        y1: {
+                                            type: 'linear',
+                                            display: true,
+                                            position: 'right',
+                                            grid: {
+                                                drawOnChartArea: false,
+                                            },
+                                            title: {
+                                                display: true,
+                                                text: '<?php esc_html_e('Quantidade', 'rifas'); ?>'
+                                            },
+                                            ticks: {
+                                                beginAtZero: true,
+                                                stepSize: 1
+                                            }
                                         }
                                     }
                                 }
-                            }
-                        });
+                            });
+                        }
+                        
+                        // Verificar se Chart.js está disponível
+                        if (typeof Chart !== 'undefined') {
+                            initializeCharts();
+                        }
                     });
                 </script>
             </div>
@@ -564,9 +572,12 @@ $valor_por_numero = floatval($options['valor_por_numero']);
             var script = document.createElement('script');
             script.src = 'https://cdn.jsdelivr.net/npm/chart.js@3.7.1/dist/chart.min.js';
             script.onload = function() {
-                // Initialize charts after loading
+                // Initialize charts após carregar
                 if (typeof initializeCharts === 'function') {
                     initializeCharts();
+                } else if (window.jQuery && jQuery('#rifas-grafico-vendas').length) {
+                    // Tentar inicializar novamente se o elemento existir
+                    jQuery(document).ready();
                 }
             };
             document.head.appendChild(script);
