@@ -41,6 +41,9 @@ class Rifas_Plugin {
     
     // Ativação do plugin
     public function activate() {
+        // Incluir o arquivo de helpers se necessário
+        require_once(plugin_dir_path(__FILE__) . 'includes/helpers.php');
+        
         // Criar tabelas personalizadas
         global $wpdb;
         $charset_collate = $wpdb->get_charset_collate();
@@ -53,7 +56,9 @@ class Rifas_Plugin {
             numero int NOT NULL,
             status varchar(20) NOT NULL DEFAULT 'disponivel',
             compra_id mediumint(9) DEFAULT NULL,
-            PRIMARY KEY  (id)
+            PRIMARY KEY  (id),
+            KEY numero (numero),
+            KEY status (status)
         ) $charset_collate;
         
         CREATE TABLE $table_compras (
@@ -63,7 +68,9 @@ class Rifas_Plugin {
             valor decimal(10,2) NOT NULL,
             numeros_selecionados text NOT NULL,
             data_compra datetime DEFAULT CURRENT_TIMESTAMP,
-            PRIMARY KEY  (id)
+            PRIMARY KEY  (id),
+            KEY email (email),
+            KEY data_compra (data_compra)
         ) $charset_collate;";
         
         require_once(ABSPATH . 'wp-admin/includes/upgrade.php');
@@ -83,9 +90,9 @@ class Rifas_Plugin {
         );
         
         add_option('rifas_options', $default_options);
+        add_option('rifas_quantidade_anterior', $default_options['quantidade_numeros']);
         
         // Preencher tabela de números
-        $valores = array();
         $quantidade = $default_options['quantidade_numeros'];
         
         for ($i = 1; $i <= $quantidade; $i++) {
@@ -96,6 +103,14 @@ class Rifas_Plugin {
                     'status' => 'disponivel'
                 )
             );
+        }
+        
+        // Registrar log de ativação do plugin
+        if (function_exists('rifas_registrar_log')) {
+            rifas_registrar_log('plugin_ativado', array(
+                'versao' => '1.0',
+                'quantidade_numeros' => $quantidade
+            ));
         }
     }
     
@@ -113,6 +128,13 @@ class Rifas_Plugin {
         
         delete_option('rifas_options');
         */
+        
+        // Registrar log de desativação
+        if (function_exists('rifas_registrar_log')) {
+            rifas_registrar_log('plugin_desativado', array(
+                'data' => current_time('mysql')
+            ));
+        }
     }
     
     // Registrar post types
@@ -225,6 +247,15 @@ class Rifas_Plugin {
                             )
                         );
                     }
+                    
+                    // Registrar log
+                    if (function_exists('rifas_registrar_log')) {
+                        rifas_registrar_log('numeros_adicionados', array(
+                            'de' => $antiga_quantidade,
+                            'para' => $nova_quantidade,
+                            'total_adicionado' => $nova_quantidade - $antiga_quantidade
+                        ));
+                    }
                 } else if ($nova_quantidade < $antiga_quantidade) {
                     // Verificar se os números a serem removidos estão disponíveis
                     $numeros_vendidos = $wpdb->get_var(
@@ -247,13 +278,46 @@ class Rifas_Plugin {
                         $options['quantidade_numeros'] = $antiga_quantidade;
                         update_option('rifas_options', $options);
                     } else {
-                        // Remover números não vendidos
-                        $wpdb->query(
+                        // Verificar se os números estão em alguma compra pendente
+                        $compras_pendentes = $wpdb->get_var(
                             $wpdb->prepare(
-                                "DELETE FROM $table_rifas WHERE numero > %d",
+                                "SELECT COUNT(*) FROM $table_rifas r 
+                                INNER JOIN {$wpdb->prefix}rifas_compras c ON r.compra_id = c.id 
+                                WHERE r.numero > %d",
                                 $nova_quantidade
                             )
                         );
+                        
+                        if ($compras_pendentes > 0) {
+                            // Não podemos remover números em compras pendentes
+                            add_settings_error(
+                                'rifas_options',
+                                'compras_pendentes',
+                                'Não é possível reduzir a quantidade de números pois alguns estão em compras pendentes.',
+                                'error'
+                            );
+                            
+                            // Restaurar a quantidade anterior
+                            $options['quantidade_numeros'] = $antiga_quantidade;
+                            update_option('rifas_options', $options);
+                        } else {
+                            // Remover números não vendidos
+                            $wpdb->query(
+                                $wpdb->prepare(
+                                    "DELETE FROM $table_rifas WHERE numero > %d",
+                                    $nova_quantidade
+                                )
+                            );
+                            
+                            // Registrar log
+                            if (function_exists('rifas_registrar_log')) {
+                                rifas_registrar_log('numeros_removidos', array(
+                                    'de' => $antiga_quantidade,
+                                    'para' => $nova_quantidade,
+                                    'total_removido' => $antiga_quantidade - $nova_quantidade
+                                ));
+                            }
+                        }
                     }
                 }
                 
@@ -374,6 +438,27 @@ class Rifas_Plugin {
             wp_die();
         }
         
+        // Verificar máximo de números permitidos pelo valor informado
+        $max_numeros_permitidos = floor($valor / $valor_por_numero);
+        
+        if ($quantidade_numeros > $max_numeros_permitidos) {
+            wp_send_json_error(array(
+                'message' => "Com o valor informado de R$ " . number_format($valor, 2, ',', '.') . " você pode comprar no máximo {$max_numeros_permitidos} número(s)."
+            ));
+            wp_die();
+        }
+        
+        // Verificar se os números estão dentro do intervalo válido
+        $quantidade_total = $options['quantidade_numeros'];
+        foreach ($numeros as $numero) {
+            if ($numero < 1 || $numero > $quantidade_total) {
+                wp_send_json_error(array(
+                    'message' => "O número {$numero} está fora do intervalo válido (1 a {$quantidade_total})."
+                ));
+                wp_die();
+            }
+        }
+        
         // Verificar se os números estão disponíveis
         global $wpdb;
         $table_rifas = $wpdb->prefix . 'rifas_numeros';
@@ -402,58 +487,160 @@ class Rifas_Plugin {
             wp_die();
         }
         
-        // Realizar a compra
-        $wpdb->insert(
-            $table_compras,
-            array(
-                'nome' => $nome,
-                'email' => $email,
-                'valor' => $valor,
-                'numeros_selecionados' => implode(',', $numeros)
-            )
-        );
+        // Realizar a compra - adicionar bloqueio para evitar race conditions
+        $wpdb->query('START TRANSACTION');
         
-        $compra_id = $wpdb->insert_id;
-        
-        // Atualizar status dos números
-        foreach ($numeros as $numero) {
-            $wpdb->update(
-                $table_rifas,
+        try {
+            // Verificar novamente a disponibilidade antes de efetuar a compra
+            $numeros_indisponiveis_recheck = array();
+            
+            foreach ($numeros as $numero) {
+                $status = $wpdb->get_var(
+                    $wpdb->prepare(
+                        "SELECT status FROM $table_rifas WHERE numero = %d FOR UPDATE",
+                        $numero
+                    )
+                );
+                
+                if ($status != 'disponivel') {
+                    $numeros_indisponiveis_recheck[] = $numero;
+                }
+            }
+            
+            if (!empty($numeros_indisponiveis_recheck)) {
+                $wpdb->query('ROLLBACK');
+                wp_send_json_error(array(
+                    'message' => 'Os seguintes números foram reservados por outro usuário: ' . implode(', ', $numeros_indisponiveis_recheck),
+                    'numeros_indisponiveis' => $numeros_indisponiveis_recheck
+                ));
+                wp_die();
+            }
+            
+            // Inserir compra
+            $wpdb->insert(
+                $table_compras,
                 array(
-                    'status' => 'vendido',
-                    'compra_id' => $compra_id
-                ),
-                array('numero' => $numero)
+                    'nome' => $nome,
+                    'email' => $email,
+                    'valor' => $valor,
+                    'numeros_selecionados' => implode(',', $numeros),
+                    'data_compra' => current_time('mysql')
+                )
             );
+            
+            $compra_id = $wpdb->insert_id;
+            
+            // Atualizar status dos números
+            foreach ($numeros as $numero) {
+                $wpdb->update(
+                    $table_rifas,
+                    array(
+                        'status' => 'vendido',
+                        'compra_id' => $compra_id
+                    ),
+                    array('numero' => $numero)
+                );
+            }
+            
+            $wpdb->query('COMMIT');
+            
+            // Registrar log da compra
+            if (function_exists('rifas_registrar_log')) {
+                rifas_registrar_log('compra_realizada', array(
+                    'compra_id' => $compra_id,
+                    'nome' => $nome,
+                    'numeros' => $numeros,
+                    'valor' => $valor
+                ));
+            }
+            
+            // Enviar email de confirmação
+            $this->enviar_email_confirmacao($nome, $email, $numeros, $valor);
+            
+            wp_send_json_success(array(
+                'message' => 'Compra realizada com sucesso!',
+                'compra_id' => $compra_id
+            ));
+            
+        } catch (Exception $e) {
+            $wpdb->query('ROLLBACK');
+            wp_send_json_error(array(
+                'message' => 'Erro ao processar a compra: ' . $e->getMessage()
+            ));
         }
-        
-        // Enviar email de confirmação (opcional)
-        $this->enviar_email_confirmacao($nome, $email, $numeros, $valor);
-        
-        wp_send_json_success(array(
-            'message' => 'Compra realizada com sucesso!',
-            'compra_id' => $compra_id
-        ));
         
         wp_die();
     }
     
     // Enviar email de confirmação
     private function enviar_email_confirmacao($nome, $email, $numeros, $valor) {
-        $options = get_option('rifas_options');
-        $titulo_rifa = $options['titulo_rifa'];
-        
-        $assunto = "Confirmação de compra - {$titulo_rifa}";
-        
-        $mensagem = "Olá {$nome},\n\n";
-        $mensagem .= "Sua compra para a rifa \"{$titulo_rifa}\" foi confirmada!\n\n";
-        $mensagem .= "Detalhes da compra:\n";
-        $mensagem .= "- Valor: R$ " . number_format($valor, 2, ',', '.') . "\n";
-        $mensagem .= "- Números: " . implode(', ', $numeros) . "\n\n";
-        $mensagem .= "Obrigado por participar!\n\n";
-        $mensagem .= get_bloginfo('name');
-        
-        wp_mail($email, $assunto, $mensagem);
+        // Verificar se a função de helpers está disponível
+        if (function_exists('rifas_enviar_email')) {
+            $options = get_option('rifas_options');
+            $titulo_rifa = $options['titulo_rifa'];
+            
+            $assunto = sprintf(__('Confirmação de compra - %s', 'rifas'), $titulo_rifa);
+            
+            // Criar conteúdo HTML
+            $mensagem = '<!DOCTYPE html>
+            <html>
+            <head>
+                <meta charset="UTF-8">
+                <title>' . esc_html($assunto) . '</title>
+                <style>
+                    body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+                    .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+                    .header { background-color: ' . esc_attr($options['cor_principal']) . '; color: ' . esc_attr($options['cor_texto']) . '; padding: 15px; text-align: center; }
+                    .content { padding: 20px; background-color: #f9f9f9; }
+                    .details { margin: 20px 0; padding: 15px; background-color: #fff; border-left: 4px solid ' . esc_attr($options['cor_principal']) . '; }
+                    .footer { text-align: center; margin-top: 20px; font-size: 12px; color: #777; }
+                </style>
+            </head>
+            <body>
+                <div class="container">
+                    <div class="header">
+                        <h1>' . esc_html($titulo_rifa) . '</h1>
+                    </div>
+                    <div class="content">
+                        <p>' . sprintf(__('Olá %s,', 'rifas'), esc_html($nome)) . '</p>
+                        <p>' . sprintf(__('Sua compra para a rifa "%s" foi confirmada!', 'rifas'), esc_html($titulo_rifa)) . '</p>
+                        
+                        <div class="details">
+                            <h3>' . __('Detalhes da compra:', 'rifas') . '</h3>
+                            <p><strong>' . __('Valor:', 'rifas') . '</strong> ' . esc_html(rifas_formatar_valor($valor)) . '</p>
+                            <p><strong>' . __('Números:', 'rifas') . '</strong> ' . esc_html(implode(', ', $numeros)) . '</p>
+                        </div>
+                        
+                        <p>' . __('Obrigado por participar!', 'rifas') . '</p>
+                    </div>
+                    <div class="footer">
+                        <p>' . esc_html(get_bloginfo('name')) . '</p>
+                    </div>
+                </div>
+            </body>
+            </html>';
+            
+            // Enviar email usando a função helper
+            return rifas_enviar_email($email, $assunto, $mensagem);
+        } else {
+            // Fallback para o método anterior
+            $options = get_option('rifas_options');
+            $titulo_rifa = $options['titulo_rifa'];
+            
+            $assunto = sprintf(__('Confirmação de compra - %s', 'rifas'), $titulo_rifa);
+            
+            $mensagem = sprintf(__('Olá %s,', 'rifas'), $nome) . "\n\n";
+            $mensagem .= sprintf(__('Sua compra para a rifa "%s" foi confirmada!', 'rifas'), $titulo_rifa) . "\n\n";
+            $mensagem .= __('Detalhes da compra:', 'rifas') . "\n";
+            $mensagem .= '- ' . __('Valor:', 'rifas') . ' ' . rifas_formatar_valor($valor) . "\n";
+            $mensagem .= '- ' . __('Números:', 'rifas') . ' ' . implode(', ', $numeros) . "\n\n";
+            $mensagem .= __('Obrigado por participar!', 'rifas') . "\n\n";
+            $mensagem .= get_bloginfo('name');
+            
+            $headers = array('Content-Type: text/html; charset=UTF-8');
+            
+            return wp_mail($email, $assunto, nl2br($mensagem), $headers);
+        }
     }
 }
 
