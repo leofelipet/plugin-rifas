@@ -18,9 +18,12 @@
     background-color: #fff;
     border-radius: 10px;
     box-shadow: 0 0 20px rgba(0, 0, 0, 0.1);
+    box-sizing: border-box;
 }
 
-.rifas-container * {
+.rifas-container *,
+.rifas-container *:before,
+.rifas-container *:after {
     box-sizing: border-box;
 }
 
@@ -101,6 +104,8 @@
     font-weight: 500;
     cursor: pointer;
     transition: background-color 0.3s, transform 0.1s;
+    display: inline-block;
+    text-align: center;
 }
 
 .rifas-btn:hover {
@@ -151,10 +156,13 @@
     display: flex;
     justify-content: center;
     margin-bottom: 20px;
+    flex-wrap: wrap;
+    gap: 10px;
 }
 
 .rifas-filtros .rifas-btn {
-    margin: 0 5px;
+    margin: 0;
+    flex: 0 0 auto;
 }
 
 .rifas-filtros .rifas-btn.active {
@@ -169,6 +177,8 @@
     padding: 10px;
     background-color: #f9f9f9;
     border-radius: 5px;
+    flex-wrap: wrap;
+    gap: 10px;
 }
 
 .rifas-grid-numeros {
@@ -272,10 +282,21 @@
 @media (max-width: 768px) {
     .rifas-container {
         padding: 15px;
+        margin: 0 10px;
+        width: auto;
+    }
+    
+    .rifas-header h2 {
+        font-size: 24px;
+    }
+    
+    .rifas-etapa h3 {
+        font-size: 20px;
     }
     
     .rifas-grid-numeros {
         grid-template-columns: repeat(auto-fill, minmax(50px, 1fr));
+        max-height: 300px;
     }
     
     .rifas-numero {
@@ -290,12 +311,69 @@
     
     .rifas-form-actions .rifas-btn {
         width: 100%;
+        margin-bottom: 10px;
     }
     
     .rifas-info-selecao {
         flex-direction: column;
         gap: 10px;
         text-align: center;
+    }
+    
+    .rifas-btn {
+        padding: 10px 20px;
+        font-size: 14px;
+        width: 100%;
+        max-width: 100%;
+    }
+    
+    .rifas-filtros {
+        flex-direction: row;
+        justify-content: center;
+    }
+    
+    .rifas-filtros .rifas-btn {
+        margin: 0;
+        width: auto;
+        flex: 1 1 auto;
+        min-width: 80px;
+        padding: 8px 12px;
+        font-size: 13px;
+    }
+}
+
+@media (max-width: 480px) {
+    .rifas-container {
+        padding: 10px;
+        border-radius: 5px;
+    }
+    
+    .rifas-header h2 {
+        font-size: 22px;
+    }
+    
+    .rifas-etapa h3 {
+        font-size: 18px;
+    }
+    
+    .rifas-grid-numeros {
+        grid-template-columns: repeat(auto-fill, minmax(40px, 1fr));
+        gap: 8px;
+        padding: 8px;
+    }
+    
+    .rifas-numero {
+        height: 40px;
+        font-size: 13px;
+    }
+    
+    .rifas-form-group input {
+        padding: 10px;
+        font-size: 14px;
+    }
+    
+    .rifas-detalhes-compra {
+        padding: 15px;
     }
 }
 
@@ -353,4 +431,35 @@
 .rifas-actions {
     display: flex;
     gap: 10px;
+    flex-wrap: wrap;
+}
+
+/* Modal para dispositivos móveis */
+@media (max-width: 768px) {
+    .rifas-modal-content {
+        width: 95%;
+        margin: 10% auto;
+        padding: 15px;
+    }
+    
+    .rifas-dashboard {
+        grid-template-columns: 1fr;
+    }
+    
+    .rifas-stat {
+        min-width: 80px;
+        margin: 5px;
+    }
+    
+    .rifas-stat-value {
+        font-size: 20px;
+    }
+    
+    .rifas-actions {
+        flex-direction: column;
+    }
+    
+    .rifas-actions .rifas-btn {
+        width: 100%;
+    }
 }
